@@ -4,7 +4,7 @@
   <img src="assets/banner.png" alt="TarotCam: computer vision tarot reading" width="100%">
 </p>
 
-<img src="https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white" alt="Python 3.12"><img src="https://img.shields.io/badge/OpenCV-SIFT%20%2B%20FLANN-5C3EE8?logo=opencv&logoColor=white" alt="OpenCV"><img src="https://img.shields.io/badge/UI-English%20%7C%20Espa%C3%B1ol-2ea44f" alt="English and Spanish"><img src="https://img.shields.io/badge/platform-macOS-lightgrey?logo=apple" alt="macOS"><img src="https://img.shields.io/badge/license-MIT-yellow" alt="MIT license">
+<img src="https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white" alt="Python 3.12"> <img src="https://img.shields.io/badge/OpenCV-SIFT%20%2B%20FLANN-5C3EE8?logo=opencv&logoColor=white" alt="OpenCV"> <img src="https://img.shields.io/badge/UI-English%20%7C%20Espa%C3%B1ol-2ea44f" alt="English and Spanish"> <img src="https://img.shields.io/badge/platform-macOS-lightgrey?logo=apple" alt="macOS"> <img src="https://img.shields.io/badge/license-MIT-yellow" alt="MIT license">
 
 Lay tarot cards in front of a camera. TarotCam recognises every one of them, understands where you put them, and builds a reading that evolves with each card you add.
 
