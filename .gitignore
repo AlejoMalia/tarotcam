@@ -1,11 +1,9 @@
-# La baraja se descarga con: python download_deck.py (Wikimedia Commons, dominio público)
-deck/
+# Barajas, datasets y base de conocimiento locales (se descargan o generan)
+data/
 __pycache__/
 *.pyc
 .DS_Store
 .venv/
 captura_*.png
-knowledge/
 capture_*.png
 out/
-datasets/
