@@ -12,7 +12,9 @@ Usage (from this folder):
   python -m tarotcam --setup-chart                                  # add your natal chart (stays local)
   python -m tarotcam --writer local                                 # prose by a local model (Ollama, LM Studio)
 
-Keys: q quit · r reset the table · s save screenshot · d story / analysis · f focus · l English / Español
+  python -m tarotcam --deck marseille                                   # Tarot de Marseille
+
+Keys: t deck (Rider-Waite-Smith / Marseille) · q quit · r reset the table · s save screenshot · d story / analysis · f focus · l English / Español
       n natal chart on/off · a local model on/off (only with --writer local)
 """
 from __future__ import annotations
@@ -49,12 +51,12 @@ def _stub_tkinter():
 
 import cv2  # noqa: E402
 
-from tarotcam import paths  # noqa: E402
 from tarotcam import i18n  # noqa: E402
 from tarotcam.engine import llm  # noqa: E402
 from tarotcam.engine import narrator  # noqa: E402
 from tarotcam.astro import natal  # noqa: E402
 from tarotcam.i18n import L  # noqa: E402
+from tarotcam.carddata import cards, decks  # noqa: E402
 from tarotcam.carddata.cards import BY_ID  # noqa: E402
 from tarotcam.vision.recognizer import Deck, GlobalScanner  # noqa: E402
 from tarotcam.engine.spreads import analyze  # noqa: E402
@@ -104,6 +106,7 @@ def main():
     ap.add_argument("--focus", choices=narrator.FOCI, default="general", help="area of life (key f cycles it)")
     ap.add_argument("--setup-chart", action="store_true", help="enter your birth data (kept on this computer)")
     ap.add_argument("--no-chart", action="store_true", help="ignore the saved natal chart")
+    ap.add_argument("--deck", choices=decks.SYSTEMS, default="rws", help="deck on the table (key t switches it)")
     ap.add_argument("--writer", choices=["rules", "local"], default="rules",
                     help="who writes the story: built-in rules or a local language model")
     ap.add_argument("--model", default=llm.DEFAULT_MODEL, help="local model name")
@@ -115,7 +118,21 @@ def main():
     if a.setup_chart:
         natal.setup()
     print(L("Loading the deck…", "Cargando baraja…"))
-    scanner = GlobalScanner(Deck(paths.RWS_DECK))
+    scanners = {}
+
+    def scanner_for(system):
+        if system not in scanners:
+            folders = decks.folders(system)
+            if not folders:
+                return None
+            scanners[system] = GlobalScanner(Deck(folders))
+        return scanners[system]
+
+    cards.set_system(a.deck)
+    scanner = scanner_for(a.deck)
+    if scanner is None:
+        sys.exit(L(f"Deck images missing. Run: python -m tarotcam.tools.download_deck --deck {a.deck}",
+                   f"Faltan las imágenes. Ejecuta: python -m tarotcam.tools.download_deck --deck {a.deck}"))
     table = Table(scanner, spread_mode=a.spread, threaded=not a.image)
     table.detail = a.detail
     table.focus = a.focus
@@ -181,6 +198,18 @@ def main():
             table.focus = narrator.FOCI[(narrator.FOCI.index(table.focus) + 1) % len(narrator.FOCI)]
         if k == ord("n") and table.chart:
             table.use_chart = not table.use_chart
+        if k == ord("t"):
+            other = decks.SYSTEMS[(decks.SYSTEMS.index(cards.system()) + 1) % len(decks.SYSTEMS)]
+            new = scanner_for(other)
+            if new is None:
+                print(L(f"Deck images missing for {other}.", f"Faltan las imágenes de {other}."))
+            else:
+                cards.set_system(other)
+                table.close()
+                old = table
+                table = Table(new, spread_mode=old.spread_mode, threaded=True)
+                for attr in ("detail", "focus", "writer", "use_writer", "chart", "use_chart"):
+                    setattr(table, attr, getattr(old, attr))
         if k == ord("a") and table.writer:
             table.use_writer = not table.use_writer
         if k == ord("s"):

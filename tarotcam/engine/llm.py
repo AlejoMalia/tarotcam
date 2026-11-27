@@ -14,7 +14,7 @@ import urllib.request
 from urllib.parse import urlparse
 
 from tarotcam.astro import chartlink
-from tarotcam.carddata import datasets
+from tarotcam.carddata import cards, datasets
 from tarotcam import i18n
 from tarotcam.engine import narrator
 from tarotcam.engine import reading
@@ -26,13 +26,14 @@ SETTLE = 2.0                                       # segundos sin cambios en la 
 
 
 def facts(layout, focus: str, chart=None) -> str:
-    lines = [f"Spread: {layout.name}. Focus: {focus}."]
+    lines = [f"Deck: {cards.system()}. Spread: {layout.name}. Focus: {focus}."]
     for c in reading._states(layout):
         cid = c.card["id"]
         line = f"- {c.role}: {c.name}{' (reversed)' if c.reversed else ''}. Keywords: {c.kw(5)}."
-        if focus != "general" and datasets.area_text(cid, focus, c.reversed):
+        rws = c.card.get("system") != "marseille"
+        if rws and focus != "general" and datasets.area_text(cid, focus, c.reversed):
             line += f" For {focus}: {datasets.area_text(cid, focus, c.reversed)}"
-        if datasets.golden_dawn_title(cid):
+        if rws and datasets.golden_dawn_title(cid):
             line += f" Golden Dawn title: {datasets.golden_dawn_title(cid)}."
         lines.append(line)
     if chart is not None:
@@ -94,7 +95,7 @@ class LocalWriter:
         """No bloquea. Devuelve el texto del modelo si ya existe para esta mesa; si no, None."""
         if not layout.slots:
             return None
-        key = "|".join([i18n.lang(), focus, layout.kind, f"{chart.name}{chart.local}" if chart else ""]
+        key = "|".join([i18n.lang(), cards.system(), focus, layout.kind, f"{chart.name}{chart.local}" if chart else ""]
                        + [f"{s.track.card_id}{int(s.track.reversed)}{s.key}" for s in layout.slots])
         if key in self._cache:
             self.status = "local model"

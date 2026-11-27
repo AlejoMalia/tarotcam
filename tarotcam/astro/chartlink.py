@@ -21,6 +21,8 @@ RULER = {"Aries": "Marte", "Tauro": "Venus", "Géminis": "Mercurio", "Cáncer": 
 def card_span(card: dict) -> tuple[float, float] | None:
     """Tramo zodiacal propio de la carta (decanato de un pip, rango de un corte)."""
     signs = card["corr"]["signs"]
+    if not signs:
+        return None
     if card["arcana"] == "menor" and 2 <= card["num"] <= 10:
         start = SIGNS.index(signs[0]) * 30 + ((card["num"] - 2) % 3) * 10
         return start, start + 10

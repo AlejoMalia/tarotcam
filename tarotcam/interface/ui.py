@@ -12,14 +12,13 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from tarotcam import paths
+from tarotcam.carddata import cards, decks
 from tarotcam.carddata.cards import BY_ID
 from tarotcam.engine import narrator
 from tarotcam.i18n import L, plural
 from tarotcam.engine.reading import compose, headline_key
 from tarotcam.engine.spreads import analyze
 
-DECK_DIR = paths.RWS_DECK
 CANVAS_W, CANVAS_H = 1280, 900
 VID_W, VID_H = 640, 480
 PAD = 36                                          # margen general
@@ -62,13 +61,13 @@ def font(size: int, bold: bool = False):
     return _fonts[key]
 
 
-_thumb_cache: dict[tuple[int, bool, int], Image.Image] = {}
+_thumb_cache: dict[tuple, Image.Image] = {}
 
 
 def _thumb(card_id, reversed_, h):
-    key = (card_id, reversed_, h)
+    key = (cards.system(), card_id, reversed_, h)
     if key not in _thumb_cache:
-        im = Image.open(DECK_DIR / f"{card_id:02d}.jpg").convert("RGB")
+        im = Image.open(decks.reference_image(cards.system(), card_id)).convert("RGB")
         im = im.resize((max(1, int(im.width * h / im.height)), h))
         _thumb_cache[key] = im.rotate(180) if reversed_ else im
     return _thumb_cache[key]
@@ -186,7 +185,7 @@ def _draw_cards(d, canvas, items, layout_name):
         yy += 6
         if lvl == "full":                               # número, elemento, astrología y extra, con etiqueta
             rows_ = [(L("NUMBER", "NÚMERO"), corr["numero"], ""), (L("ELEMENT", "ELEMENTO"), corr["elemento"], ""),
-                     (L("ASTROLOGY", "ASTROLOGÍA"), corr["astro"], ""),
+                     (corr.get("astro_label", L("ASTROLOGY", "ASTROLOGÍA")), corr["astro"], ""),
                      (corr["extra_label"].upper(), corr["extra"], corr["glyph"])]
             for lab, val, glyph in rows_:
                 d.text((tx, yy + 2), lab, font=font(10), fill=FAINT)
@@ -328,7 +327,7 @@ def render(frame_bgr: np.ndarray, table, status: str = "") -> np.ndarray:
     _draw_cards(d, canvas, items, layout.name)
     _draw_reading(d, secs, detail, story)
     name = L(*narrator.FOCUS_NAME[focus])
-    hint = L(f"d  {'story' if detail else 'analysis'}    f  focus: {name}    l  español",
+    hint = L(*decks.SYSTEM_NAMES[cards.system()]) + "    t    " + L(f"d  {'story' if detail else 'analysis'}    f  focus: {name}    l  español",
              f"d  {'narración' if detail else 'análisis'}    f  enfoque: {name}    l  English")
     if getattr(table, "chart", None):
         hint += L(f"    n  chart: {'on' if chart else 'off'}", f"    n  carta astral: {'sí' if chart else 'no'}")

@@ -4,6 +4,8 @@ id 0-21 arcanos mayores; 22-35 bastos; 36-49 copas; 50-63 espadas; 64-77 oros.
 Cada carta: nombre ES/EN, archivo en Wikimedia Commons, significado al derecho y al revés.
 """
 
+from collections.abc import Mapping
+
 from tarotcam.carddata import cards_en
 from tarotcam import i18n
 
@@ -145,7 +147,6 @@ def _build():
 
 
 CARDS = _build()
-BY_ID = {c["id"]: c for c in CARDS}
 assert len(CARDS) == 78
 
 
@@ -186,6 +187,8 @@ def _kb_keywords(card_id, reversed_, lang):
 
 def _base_text(card, reversed_, lang):
     if lang == "en":
+        if card.get("system") == "marseille":
+            return card["en_rev" if reversed_ else "en_up"]
         return cards_en.meanings(card["id"])[1 if reversed_ else 0]
     return card["reversed"] if reversed_ else card["upright"]
 
@@ -194,7 +197,7 @@ def keywords(card, reversed_=False, k=3, lang=None):
     """Palabras clave en el idioma pedido (por defecto el actual): de la base de conocimiento si existe,
     si no, del significado base. El motor analiza siempre con lang="es"."""
     lang = lang or i18n.lang()
-    kws = _kb_keywords(card["id"], reversed_, lang)
+    kws = [] if card.get("system") == "marseille" else _kb_keywords(card["id"], reversed_, lang)
     if kws:
         return [x.strip().lower() for x in kws[:k]]
     text = _base_text(card, reversed_, lang)
@@ -203,7 +206,7 @@ def keywords(card, reversed_=False, k=3, lang=None):
 
 def meaning(card, reversed_=False):
     """Texto de significado para mostrar, en el idioma actual."""
-    kws = _kb_keywords(card["id"], reversed_, i18n.lang())
+    kws = [] if card.get("system") == "marseille" else _kb_keywords(card["id"], reversed_, i18n.lang())
     if kws:
         t = ", ".join(x.strip().lower() for x in kws[:5])
         return t[:1].upper() + t[1:] + "."
@@ -214,3 +217,40 @@ def meaning(card, reversed_=False):
 from tarotcam.carddata import correspondences  # noqa: E402
 
 correspondences.annotate(CARDS)
+
+
+# ---- sistema de baraja activo ---------------------------------------------------------------
+_RWS = {c["id"]: c for c in CARDS}
+_systems: dict[str, dict] = {"rws": _RWS}
+_current = "rws"
+
+
+def system() -> str:
+    return _current
+
+
+def set_system(name: str) -> None:
+    """Cambia la baraja activa ('rws' o 'marseille'). Los ids internos no cambian."""
+    global _current
+    if name not in _systems:
+        if name != "marseille":
+            raise ValueError(f"unknown deck system: {name}")
+        from . import marseille
+        _systems[name] = {c["id"]: c for c in marseille.build(CARDS)}
+    _current = name
+
+
+class _ById(Mapping):
+    """BY_ID[id] devuelve la carta de la baraja activa."""
+
+    def __getitem__(self, card_id):
+        return _systems[_current][card_id]
+
+    def __iter__(self):
+        return iter(_systems[_current])
+
+    def __len__(self):
+        return len(_systems[_current])
+
+
+BY_ID = _ById()

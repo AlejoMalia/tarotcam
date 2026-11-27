@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 TESTS = ["test_correspondences", "test_layouts", "test_synthesis", "test_natal", "test_i18n", "test_datasets",
-         "test_narrator", "test_flow", "test_e2e"]
+         "test_narrator", "test_marseille", "test_flow", "test_e2e"]
 BENCH = ["scale_test", "partial_test"]
 
 

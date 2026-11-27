@@ -16,7 +16,7 @@ Lay tarot cards in front of a camera. TarotCam recognises every one of them, und
 
 ## Highlights
 
-- 🃏 **All 78 cards** of the Rider-Waite-Smith deck, upright **and reversed**.
+- 🃏 **Two decks:** Rider-Waite-Smith and the **Tarot de Marseille**, all 78 cards, upright **and reversed**.
 - 🔍 **Partially hidden cards:** a card is recognised from a fraction of its face, even in a stacked pile.
 - 👀 **Many cards at once.** A card is never read twice.
 - 🧭 **Position means something:** rows, Cross, Celtic Cross and Horseshoe are detected from the layout on the table.
@@ -63,21 +63,22 @@ git clone https://github.com/AlejoMalia/tarotcam.git
 cd tarotcam
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python download_deck.py            # fetches the 78 reference cards (~16 MB) from Wikimedia Commons
-python fetch_datasets.py           # optional: three open tarot datasets (~0.3 MB)
-python tarot_reader.py --camera 0  # live, using your webcam
+python -m tarotcam.tools.download_deck            # fetches the 78 reference cards (~16 MB) from Wikimedia Commons
+python -m tarotcam.tools.fetch_datasets           # optional: three open tarot datasets (~0.3 MB)
+python -m tarotcam --camera 0  # live, using your webcam
 ```
 
 No camera at hand? Analyse a picture:
 
 ```bash
-python tarot_reader.py --image table.jpg --save reading.png
+python -m tarotcam --image table.jpg --save reading.png
 ```
 
 ### Controls
 
 | Key | Action |
 |---|---|
+| `t` | deck: Rider-Waite-Smith ⇄ Marseille |
 | `d` | story ⇄ section-by-section analysis |
 | `f` | focus: general → love → work → money → inner life |
 | `l` | English ⇄ Español |
@@ -92,6 +93,7 @@ python tarot_reader.py --image table.jpg --save reading.png
 | Option | Meaning |
 |---|---|
 | `--camera N` | OpenCV camera index |
+| `--deck rws\|marseille` | deck on the table (default `rws`) |
 | `--image FILE` / `--save FILE` | analyse a still picture / save the rendered result |
 | `--lang en\|es` | interface language (default `en`) |
 | `--spread auto\|rows\|line\|cross\|celtic\|horseshoe\|entry` | how to read the layout (default `auto`) |
@@ -101,12 +103,25 @@ python tarot_reader.py --image table.jpg --save reading.png
 | `--writer rules\|local` | built-in writer (default) or a local language model |
 | `--model NAME` / `--llm-url URL` | local model name and endpoint |
 
+## Tarot de Marseille
+
+```bash
+python -m tarotcam.tools.download_deck --deck marseille
+python -m tarotcam --camera 0 --deck marseille
+```
+
+- French card names, traditional printed numbers (**Justice is VIII, Strength XI**, XIII has no name, Le Mat has no number).
+- Pip cards are read as the idea of their number applied to their suit; trumps and court cards traditionally.
+- No Hebrew letters, planets or signs are shown: those attributions belong to other traditions. The engine still uses one element per card for its elemental balance.
+- Reference images, from Wikimedia Commons: [CBD Tarot de Marseille](https://commons.wikimedia.org/wiki/Category:Tarot_de_Marseille_-_Yoav_Ben-Dov) by Yoav Ben-Dov (CC BY 3.0) and [Jean Dodal, c. 1701–1715](https://commons.wikimedia.org/wiki/Category:Tarot_de_Marseille_-_Jean_Dodal) (public domain, BnF). Commons limits download speed: if some images fail, wait a while and run the command again; it resumes. A deck is used once its 78 images are present.
+- Recognition has only been spot-checked on the major arcana. Marseille pip cards look alike and are nearly symmetrical, so expect lower accuracy and unreliable orientation on them.
+
 ## Your natal chart (optional)
 
 ```bash
-python natal.py            # asks name, date, time and birthplace
-python natal.py --show     # print the chart
-python natal.py --delete   # remove your data
+python -m tarotcam.astro.natal            # asks name, date, time and birthplace
+python -m tarotcam.astro.natal --show     # print the chart
+python -m tarotcam.astro.natal --delete   # remove your data
 ```
 
 - Computed **entirely on your machine** with [PyEphem](https://rhodesmill.org/pyephem/) and an offline city list. No birth data is sent anywhere.
@@ -115,7 +130,7 @@ python natal.py --delete   # remove your data
 - Without a birth time there is no Ascendant or houses, and the Moon is treated as approximate.
 - In the reading, each card is checked against your chart: a natal point inside the card's own **decan**, your Sun / Moon / Rising sign, the placement of the card's planet, and how the table's dominant element compares with yours.
 
-`test_natal.py` checks the astronomy against independent facts (the Sun at the equinoxes, on the Ascendant at sunrise and on the Midheaven at noon).
+`tests/test_natal.py` checks the astronomy against independent facts (the Sun at the equinoxes, on the Ascendant at sunrise and on the Midheaven at noon).
 
 ## The writer
 
@@ -125,7 +140,7 @@ The default writer composes prose from the engine's analysis. Phrasing varies be
 
 ```bash
 ollama pull qwen2.5:3b
-python tarot_reader.py --camera 0 --writer local --model qwen2.5:3b
+python -m tarotcam --camera 0 --writer local --model qwen2.5:3b
 ```
 
 Only loopback addresses are accepted. The model receives the facts of the table (and your chart, if enabled) and, while it writes or if it fails, the built-in text is shown. The connector is tested against a mock server; the quality of the prose depends on the model you choose.
@@ -228,7 +243,7 @@ Simulation uses the same artwork as the reference deck, so **your physical deck,
 
 ## Data sources
 
-`fetch_datasets.py` downloads three open datasets, pinned to reviewed commits, into `datasets/` (not included in this repository). Their texts are in English and feed the focus sentences, Golden Dawn titles and cross-checks.
+`tarotcam.tools.fetch_datasets` downloads three open datasets, pinned to reviewed commits, into `data/datasets/` (not included in this repository). Their texts are in English and feed the focus sentences, Golden Dawn titles and cross-checks.
 
 | Dataset | Licence |
 |---|---|
@@ -240,46 +255,35 @@ Without them the app works with its built-in meanings. In Spanish, focus sentenc
 
 ## Optional knowledge base
 
-`python build_knowledge.py --zaiphira keywords.rtf --symbols symbols.rtf` converts your own symbolism documents into
-`knowledge/kb.json`. When present, TarotCam uses its keywords (English and Spanish) and adds a **Shared symbols** section
+`python -m tarotcam.tools.build_knowledge --zaiphira keywords.rtf --symbols symbols.rtf` converts your own symbolism documents into
+`data/knowledge/kb.json`. When present, TarotCam uses its keywords (English and Spanish) and adds a **Shared symbols** section
 for the major arcana. The folder is git-ignored: no third-party texts ship with this repository, and everything else works without it.
 The parser expects the specific layout of those two documents (see the docstring in `build_knowledge.py`).
 
 ## Tests
 
 ```bash
-python test_correspondences.py   # the 78 cards carry number, element, astrology and extra
-python test_layouts.py           # geometry → spread and roles
-python test_synthesis.py         # reading scenarios: threads, tensions, correspondences
-python test_natal.py             # astronomy, city search, private profile
-python test_narrator.py          # prose, natal chart readings, local-model connector
-python test_datasets.py          # dataset coverage and cross-check
-python test_i18n.py              # no Spanish leaks into English; both languages match
-mkdir -p out
-python test_flow.py out          # cards arrive, leave and get duplicated
-python test_e2e.py out           # simulated picture → full reading
-python scale_test.py             # recognition with 1–12 cards
-python partial_test.py           # recognition from fragments and stacks
+python -m tests.run_all            # all tests
+python -m tests.run_all --bench    # plus the recognition benchmarks
 ```
 
-`test_flow`, `test_e2e`, `scale_test` and `partial_test` need the downloaded deck.
+Recognition tests need the downloaded Rider-Waite-Smith deck; the Marseille recognition check runs when its images are present.
 
 ## Project layout
 
-| File | Role |
-|---|---|
-| `tarot_reader.py` | application entry point |
-| `recognizer.py` | multi-card recognition |
-| `tracker.py` | table state over time |
-| `spreads.py` | spread detection and roles |
-| `reading.py`, `synthesis.py`, `semantics.py` | reading engine |
-| `narrator.py`, `llm.py` | prose writer and local-model connector |
-| `natal.py`, `chartlink.py` | natal chart and its links with the cards |
-| `datasets.py`, `fetch_datasets.py` | open datasets |
-| `cards.py`, `cards_en.py`, `correspondences.py` | card data |
-| `symbolism.py`, `knowledge.py`, `build_knowledge.py` | optional symbolism layer |
-| `ui.py`, `i18n.py` | interface and languages |
-| `sim.py`, `test_*.py`, `scale_test.py` | simulation and tests |
+```
+tarotcam/
+  app.py          application (python -m tarotcam)
+  i18n.py  paths.py
+  carddata/       meanings, correspondences, decks, Marseille, optional data layers
+  vision/         card recognition and table state
+  engine/         spreads, analysis, writers
+  astro/          natal chart
+  interface/      rendering
+  tools/          download and build scripts
+tests/            tests, simulator and benchmarks
+data/             local decks and datasets (git-ignored)
+```
 
 ## Limitations
 
@@ -290,6 +294,7 @@ python partial_test.py           # recognition from fragments and stacks
 ## Credits
 
 - Rider-Waite-Smith deck, illustrated by Pamela Colman Smith (1909); scans from [Wikimedia Commons](https://commons.wikimedia.org/).
+- Tarot de Marseille: CBD edition © Yoav Ben-Dov (CC BY 3.0); Jean Dodal, scans from the Bibliothèque nationale de France.
 - Correspondences following the Hermetic Order of the Golden Dawn tradition.
 - Meanings and attributions: the datasets listed under *Data sources*, including **StarTarot** (CC BY 4.0).
 - Astronomy: [PyEphem](https://rhodesmill.org/pyephem/) (MIT). Cities: [geonamescache](https://github.com/yaph/geonamescache) with data from [GeoNames](https://www.geonames.org/) (CC BY 4.0).

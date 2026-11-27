@@ -263,7 +263,7 @@ def _card_sentence(v: Voice, c, focus: str) -> str:
 def _area_sentence(v: Voice, c, focus: str) -> str:
     if focus == "general":
         return ""
-    if i18n.lang() == "en":
+    if i18n.lang() == "en" and c.card.get("system") != "marseille":   # los textos de área son RWS
         text = datasets.area_text(c.card["id"], focus, c.reversed)
         if not text:
             return ""

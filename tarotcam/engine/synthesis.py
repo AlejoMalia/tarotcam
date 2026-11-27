@@ -155,7 +155,7 @@ def analyze(layout, cs):
 
     sym = defaultdict(list)
     for c in cs:
-        if c.card["arcana"] == "mayor":
+        if c.card["arcana"] == "mayor" and c.card.get("system") != "marseille":   # símbolos de la imagen RWS
             for k in symbolism.categories(c.card["id"]):
                 sym[k].append(c.name)
     symbols = sorted(((k, v) for k, v in sym.items() if len(v) >= 2), key=lambda kv: -len(kv[1]))[:3]

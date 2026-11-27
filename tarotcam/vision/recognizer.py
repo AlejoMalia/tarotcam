@@ -1,182 +1,48 @@
-"""Detección de cartas en un fotograma e identificación contra la baraja de referencia.
+"""Recognition of every card in a frame, whole or partly hidden.
 
-1. find_cards():  contornos cuadriláteros con proporción de carta -> 4 esquinas.
-2. warp:          perspectiva -> carta enderezada (CARD_W x CARD_H), borde superior = arriba de la imagen.
-3. identify():    SIFT + ratio test contra las 78 referencias, verificación con homografía (RANSAC).
-                  La orientación (derecho / al revés) sale de la homografía, no de un clasificador.
+A Deck holds one or more reference images per card (several editions of the same system can be loaded at once).
 """
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
 import numpy as np
 
-from tarotcam.carddata.cards import CARDS
-
-CARD_W, CARD_H = 240, 410          # tamaño canónico (proporción ~0.585 de una carta real)
-MIN_INLIERS = 11                   # inliers RANSAC mínimos para aceptar una carta
-MARGIN = 1.4                       # el mejor debe superar al segundo en este factor
-ASPECT = (0.45, 0.78)              # ancho/alto aceptado para el cuadrilátero
-
-
-@dataclass
-class Detection:
-    quad: np.ndarray               # 4x2 en imagen, orden tl,tr,br,bl (tl = arriba de la imagen)
-    warped: np.ndarray             # gris CARD_H x CARD_W
-    M: np.ndarray                  # imagen -> canónico
-
-    @property
-    def center(self):
-        return self.quad.mean(axis=0)
-
-
-@dataclass
-class Match:
-    card_id: int
-    reversed: bool
-    inliers: int
-    second: int
-
-
-def order_quad(pts) -> np.ndarray:
-    """Ordena 4 puntos en tl,tr,br,bl con el lado izquierdo largo y la parte alta arriba."""
-    p = np.asarray(pts, np.float32).reshape(4, 2)
-    c = p.mean(axis=0)
-    ang = np.arctan2(p[:, 1] - c[1], p[:, 0] - c[0])
-    p = p[np.argsort(ang)]                      # sentido horario en coordenadas de imagen
-    e0 = np.linalg.norm(p[0] - p[1])
-    e1 = np.linalg.norm(p[1] - p[2])
-    if e0 > e1:                                  # lado izquierdo (p3->p0) corto: rotar 90°
-        p = np.roll(p, -1, axis=0)
-    if p[0][1] + p[1][1] > p[2][1] + p[3][1]:    # lo "alto" debe estar arriba en la imagen
-        p = np.roll(p, 2, axis=0)
-    return p
-
-
-def _candidates(gray: np.ndarray):
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    masks = []
-    edges = cv2.Canny(blur, 40, 120)
-    masks.append(cv2.morphologyEx(edges, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8)))
-    _, otsu = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    masks.append(otsu)
-    masks.append(255 - otsu)
-    for m in masks:
-        cnts, _ = cv2.findContours(m, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-        yield from cnts
-
-
-def find_cards(frame_bgr: np.ndarray, min_frac=0.03, max_frac=0.85) -> list[Detection]:
-    gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-    h, w = gray.shape
-    quads = []
-    for c in _candidates(gray):
-        area = cv2.contourArea(c)
-        if area < min_frac * h * w or area > max_frac * h * w:
-            continue
-        hull = cv2.convexHull(c)
-        peri = cv2.arcLength(hull, True)
-        ap = cv2.approxPolyDP(hull, 0.03 * peri, True)
-        if len(ap) != 4:
-            continue
-        q = order_quad(ap)
-        wid = (np.linalg.norm(q[0] - q[1]) + np.linalg.norm(q[3] - q[2])) / 2
-        hei = (np.linalg.norm(q[0] - q[3]) + np.linalg.norm(q[1] - q[2])) / 2
-        if hei < 1 or not (ASPECT[0] <= wid / hei <= ASPECT[1]):
-            continue
-        # el cuadrilátero debe rellenar bien su casco (descarta formas raras)
-        if cv2.contourArea(q) < 0.85 * area:
-            continue
-        quads.append((cv2.contourArea(q), q))
-    # NMS: los marcos interiores de la ilustración duplican la carta -> quedarse con el mayor
-    quads.sort(key=lambda t: -t[0])
-    kept: list[np.ndarray] = []
-    for a, q in quads:
-        ctr = q.mean(axis=0)
-        if all(np.linalg.norm(ctr - k.mean(axis=0)) > 0.35 * math.sqrt(a) for k in kept):
-            kept.append(q)
-    dets = []
-    dst = np.float32([[0, 0], [CARD_W, 0], [CARD_W, CARD_H], [0, CARD_H]])
-    for q in kept:
-        M = cv2.getPerspectiveTransform(q, dst)
-        warped = cv2.warpPerspective(gray, M, (CARD_W, CARD_H), flags=cv2.INTER_CUBIC)
-        dets.append(Detection(q, warped, M))
-    return dets
+CARD_H = 410                       # alto canónico de cada plantilla (el ancho respeta la proporción de su baraja)
 
 
 class Deck:
-    def __init__(self, deck_dir: str | Path):
-        deck_dir = Path(deck_dir)
-        self.sift = cv2.SIFT_create(nfeatures=800, contrastThreshold=0.02)
-        self.bf = cv2.BFMatcher(cv2.NORM_L2)
-        self.refs = []
-        self.refs_half = []
-        self.refs_dense = []
-        self.images = []
+    """Plantillas de referencia: carpetas con NN.jpg (NN = id de carta)."""
+
+    def __init__(self, folders):
+        if isinstance(folders, (str, Path)):
+            folders = [folders]
+        if not folders:
+            raise FileNotFoundError("No reference images. Run: python -m tarotcam.tools.download_deck")
+        sift = cv2.SIFT_create(nfeatures=800, contrastThreshold=0.02)
         dense = cv2.SIFT_create(nfeatures=1600, contrastThreshold=0.008)
-        for c in CARDS:
-            path = deck_dir / f"{c['id']:02d}.jpg"
-            img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
-            if img is None:
-                raise FileNotFoundError(f"Missing {path}. Run: python -m tarotcam.tools.download_deck")
-            img = cv2.resize(img, (CARD_W, CARD_H), interpolation=cv2.INTER_AREA)
-            kp, des = self.sift.detectAndCompute(img, None)
-            self.refs.append((np.float32([k.pt for k in kp]), des))
-            self.images.append(img)
-            kp3, des3 = dense.detectAndCompute(img, None)      # cobertura densa: cualquier trozo tiene puntos
-            self.refs_dense.append((np.float32([k.pt for k in kp3]), des3))
-            # versión a media resolución: casa mejor con cartas pequeñas y borrosas (puntos x2 al sistema canónico)
-            half = cv2.resize(img, (CARD_W // 2, CARD_H // 2), interpolation=cv2.INTER_AREA)
-            kp2, des2 = self.sift.detectAndCompute(half, None)
-            self.refs_half.append((np.float32([k.pt for k in kp2]) * 2 if kp2 else np.zeros((0, 2), np.float32), des2))
-
-    def _good(self, des, ref_des):
-        if des is None or ref_des is None or len(des) < 2 or len(ref_des) < 2:
-            return []
-        out = []
-        for pair in self.bf.knnMatch(des, ref_des, k=2):
-            if len(pair) == 2 and pair[0].distance < 0.75 * pair[1].distance:
-                out.append(pair[0])
-        return out
-
-    def _verify(self, card_id, kp_pts, good):
-        if len(good) < 8:
-            return 0, None
-        ref_pts = self.refs[card_id][0]
-        src = np.float32([ref_pts[m.trainIdx] for m in good]).reshape(-1, 1, 2)
-        dst = np.float32([kp_pts[m.queryIdx] for m in good]).reshape(-1, 1, 2)
-        H, mask = cv2.findHomography(src, dst, cv2.RANSAC, 6.0)
-        if H is None or np.linalg.det(H[:2, :2]) <= 0:      # det<=0: reflejo o degenerada
-            return 0, None
-        return int(mask.sum()), H
-
-    def _orientation(self, H, det: Detection) -> bool:
-        pts = np.float32([[[CARD_W / 2, 0]], [[CARD_W / 2, CARD_H]]])
-        canon = cv2.perspectiveTransform(pts, H)
-        img = cv2.perspectiveTransform(canon, np.linalg.inv(det.M))
-        return bool(img[0, 0, 1] > img[1, 0, 1])             # arriba de la carta cae abajo -> al revés
-
-    def identify(self, det: Detection, only: int | None = None) -> Match | None:
-        kp, des = self.sift.detectAndCompute(det.warped, None)
-        if des is None or len(kp) < 8:
-            return None
-        kp_pts = np.float32([k.pt for k in kp])
-        ids = [only] if only is not None else range(len(self.refs))
-        goods = {i: self._good(des, self.refs[i][1]) for i in ids}
-        top = sorted(goods, key=lambda i: -len(goods[i]))[:4]
-        res = []
-        for i in top:
-            inl, H = self._verify(i, kp_pts, goods[i])
-            res.append((inl, i, H))
-        res.sort(key=lambda t: -t[0])
-        best, bid, H = res[0]
-        second = res[1][0] if len(res) > 1 else 0
-        if best < MIN_INLIERS or (only is None and best < MARGIN * max(second, 1)):
-            return None
-        return Match(bid, self._orientation(H, det), best, second)
+        self.card_ids: list[int] = []
+        self.images: list[np.ndarray] = []
+        self.refs_dense: list[tuple] = []
+        self.refs_half: list[tuple] = []
+        for folder in folders:
+            for cid in range(78):
+                path = Path(folder) / f"{cid:02d}.jpg"
+                img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+                if img is None:
+                    raise FileNotFoundError(f"Missing {path}. Run: python -m tarotcam.tools.download_deck")
+                width = round(CARD_H * img.shape[1] / img.shape[0])
+                img = cv2.resize(img, (width, CARD_H), interpolation=cv2.INTER_AREA)
+                self.card_ids.append(cid)
+                self.images.append(img)
+                kp, des = dense.detectAndCompute(img, None)        # cobertura densa: cualquier trozo tiene puntos
+                self.refs_dense.append((np.float32([k.pt for k in kp]), des))
+                # versión a media resolución: casa mejor con cartas pequeñas y borrosas
+                half = cv2.resize(img, (width // 2, CARD_H // 2), interpolation=cv2.INTER_AREA)
+                kp, des = sift.detectAndCompute(half, None)
+                self.refs_half.append((np.float32([k.pt for k in kp]) * 2 if kp else np.zeros((0, 2), np.float32), des))
 
 
 @dataclass
@@ -218,29 +84,32 @@ class GlobalScanner:
         self.qsift = cv2.SIFT_create(nfeatures=5000, contrastThreshold=0.012)
         des, owner, pts = [], [], []
         for refs in (deck.refs_dense, deck.refs_half):
-            for cid, (p, d) in enumerate(refs):
+            for tid, (p, d) in enumerate(refs):
                 if d is None or len(d) == 0:
                     continue
                 des.append(d)
-                owner.append(np.full(len(d), cid, np.int32))
+                owner.append(np.full(len(d), tid, np.int32))
                 pts.append(p)
         self.owner = np.concatenate(owner)
         self.ref_pts = np.concatenate(pts)
         self.flann = cv2.FlannBasedMatcher(dict(algorithm=1, trees=5), dict(checks=64))
         self.flann.add([np.concatenate(des).astype(np.float32)])
         self.flann.train()
-        self.corners = np.float32([[[0, 0]], [[CARD_W, 0]], [[CARD_W, CARD_H]], [[0, CARD_H]]])
+        self.corners = [np.float32([[[0, 0]], [[i.shape[1], 0]], [[i.shape[1], CARD_H]], [[0, CARD_H]]])
+                        for i in deck.images]
+        self.card_of = np.int32(deck.card_ids)
         self.blurred = [cv2.GaussianBlur(i, (0, 0), 1.2).astype(np.float32) for i in deck.images]
 
     # ------------------------------------------------------------------ verificación
-    def _verify_blocks(self, gray: np.ndarray, cid: int, H: np.ndarray):
+    def _verify_blocks(self, gray: np.ndarray, tid: int, H: np.ndarray):
         """-> (fracción visible, nº de bloques que coinciden, ncc media de esos bloques, centros en el fotograma)."""
         flags = cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP                  # H: carta -> fotograma
-        seen = cv2.warpPerspective(gray, H, (CARD_W, CARD_H), flags=flags)
-        inside = cv2.warpPerspective(np.full(gray.shape, 255, np.uint8), H, (CARD_W, CARD_H), flags=flags)
+        ref = self.blurred[tid]
+        size = (ref.shape[1], CARD_H)
+        seen = cv2.warpPerspective(gray, H, size, flags=flags)
+        inside = cv2.warpPerspective(np.full(gray.shape, 255, np.uint8), H, size, flags=flags)
         seen = cv2.GaussianBlur(seen, (0, 0), 1.2).astype(np.float32)
-        ref = self.blurred[cid]
-        bw, bh = CARD_W // BLOCK_W, CARD_H // BLOCK_H
+        bw, bh = size[0] // BLOCK_W, CARD_H // BLOCK_H
         hits, scores, centres, textured = 0, [], [], 0
         for j in range(BLOCK_H):
             for i in range(BLOCK_W):
@@ -266,12 +135,12 @@ class GlobalScanner:
         return (hits / max(textured, 1), hits, float(np.mean(scores)) if scores else 0.0, frame_pts)
 
     # ------------------------------------------------------------------ pose
-    def _pose(self, src, dst, w, h):
+    def _pose(self, src, dst, w, h, corners):
         """-> (H 3x3, inliers, parcial?) o None."""
         if len(src) >= self.min_inliers:
             H, mask = cv2.findHomography(src, dst, cv2.RANSAC, 5.0)
             if H is not None and int(mask.sum()) >= self.min_inliers:
-                quad = cv2.perspectiveTransform(self.corners, H).reshape(4, 2)
+                quad = cv2.perspectiveTransform(corners, H).reshape(4, 2)
                 if self._plausible(quad, H, w, h):
                     return H, int(mask.sum()), False
         A, mask = cv2.estimateAffinePartial2D(src, dst, method=cv2.RANSAC, ransacReprojThreshold=4.0,
@@ -300,33 +169,38 @@ class GlobalScanner:
             # otra escala se parecen y no cuentan como competencia)
             first = nb[0]
             own = int(self.owner[first.trainIdx])
-            rival = next((m for m in nb[1:] if int(self.owner[m.trainIdx]) != own), None)
+            card = self.card_of[own]
+            rival = next((m for m in nb[1:] if self.card_of[self.owner[m.trainIdx]] != card), None)
             if rival is None or first.distance < self.ratio * rival.distance:
                 groups.setdefault(own, []).append((first.queryIdx, first.trainIdx))
         candidates = []
-        for cid, ms in groups.items():
+        for tid, ms in groups.items():
             if len(ms) < self.min_partial:
                 continue
             src = self.ref_pts[[t for _, t in ms]].reshape(-1, 1, 2)
             dst = q_pts[[q for q, _ in ms]].reshape(-1, 1, 2)
-            pose = self._pose(src, dst, w, h)
+            pose = self._pose(src, dst, w, h, self.corners[tid])
             if pose is None:
                 continue
             H, inliers, partial = pose
-            visible, blocks, ncc, frame_pts = self._verify_blocks(gray, cid, H)
+            visible, blocks, ncc, frame_pts = self._verify_blocks(gray, tid, H)
             if partial:
                 if blocks < MIN_BLOCKS_PARTIAL or ncc < NCC_STRONG:
                     continue
             elif blocks < 3:
                 continue
-            quad = cv2.perspectiveTransform(self.corners, H).reshape(4, 2)
-            top_y = cv2.perspectiveTransform(np.float32([[[CARD_W / 2, 0]]]), H)[0, 0, 1]
-            bot_y = cv2.perspectiveTransform(np.float32([[[CARD_W / 2, CARD_H]]]), H)[0, 0, 1]
+            quad = cv2.perspectiveTransform(self.corners[tid], H).reshape(4, 2)
+            mid = self.deck.images[tid].shape[1] / 2
+            top_y = cv2.perspectiveTransform(np.float32([[[mid, 0]]]), H)[0, 0, 1]
+            bot_y = cv2.perspectiveTransform(np.float32([[[mid, CARD_H]]]), H)[0, 0, 1]
+            cid = int(self.card_of[tid])
             score = inliers + 2.0 * blocks * ncc
             candidates.append((Found(cid, bool(top_y > bot_y), inliers, quad, min(visible, 1.0), score), frame_pts))
         # dos cartas no pueden explicar los mismos píxeles: gana la de más evidencia
         out, taken = [], np.zeros((0, 2), np.float32)
         for f, pts in sorted(candidates, key=lambda c: -c[0].score):
+            if any(o.card_id == f.card_id for o in out):       # otra edición de la misma carta
+                continue
             if len(pts) and len(taken):
                 d = np.linalg.norm(pts[:, None, :] - taken[None, :, :], axis=2).min(axis=1)
                 if (d < 12).mean() > 0.5:

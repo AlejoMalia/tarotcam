@@ -164,6 +164,9 @@ def build(card: dict, lang: str = "es") -> dict:
 
 
 def localized(card: dict) -> dict:
+    if card.get("system") == "marseille":
+        from . import marseille
+        return marseille.corr(card, i18n.lang())
     return build(card, i18n.lang())
 
 

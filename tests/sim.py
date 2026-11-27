@@ -6,14 +6,12 @@ esto mide el pipeline (detección + SIFT + orientación), no el brillo, reflejos
 """
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
 
 import cv2
 import numpy as np
 
 from tarotcam import paths
-from tarotcam.vision.recognizer import Deck, find_cards
 
 DECK_DIR = paths.RWS_DECK
 W, H = 640, 480
@@ -66,83 +64,3 @@ def render(cards, rng, card_h=(210, 290), rot=30, tilt=0.08, blur=(0.6, 1.4), no
     img = cv2.GaussianBlur(img, (0, 0), rng.uniform(*blur))
     img += rng.normal(0, rng.uniform(*noise), img.shape)
     return np.clip(img, 0, 255).astype(np.uint8), truth
-
-
-def evaluate(deck, trials_per_card=2, seed=1, verbose=False):
-    rng = np.random.default_rng(seed)
-    ok = wrong = missed = ori_bad = 0
-    wrongs = []
-    for cid in range(78):
-        for _ in range(trials_per_card):
-            rev = bool(rng.integers(2))
-            frame, _ = render([(cid, rev)], rng)
-            dets = find_cards(frame)
-            res = None
-            for d in dets:
-                m = deck.identify(d)
-                if m:
-                    res = m
-                    break
-            if res is None:
-                missed += 1
-                if verbose:
-                    print(f"  sin lectura: carta {cid} (dets={len(dets)})")
-            elif res.card_id != cid:
-                wrong += 1
-                wrongs.append((cid, res.card_id))
-            else:
-                ok += 1
-                ori_bad += res.reversed != rev
-    total = ok + wrong + missed
-    print(f"Una carta: {ok}/{total} correctas, {wrong} erróneas, {missed} sin lectura; "
-          f"orientación fallida en {ori_bad} de {ok} acertadas")
-    if wrongs:
-        print("  confusiones (real->leída):", wrongs[:10])
-    return ok, wrong, missed
-
-
-def evaluate_multi(deck, n_frames=30, seed=2):
-    rng = np.random.default_rng(seed)
-    hits = tot = false_pos = 0
-    for _ in range(n_frames):
-        k = int(rng.integers(2, 4))
-        ids = [int(x) for x in rng.choice(78, k, replace=False)]
-        cards = [(i, bool(rng.integers(2))) for i in ids]
-        frame, _ = render(cards, rng)
-        found = {}
-        for d in find_cards(frame):
-            m = deck.identify(d)
-            if m:
-                found[m.card_id] = m.reversed
-        for cid, rev in cards:
-            tot += 1
-            hits += found.get(cid) == rev
-        false_pos += sum(1 for c in found if c not in ids)
-    print(f"Varias cartas (2-3): {hits}/{tot} con carta y orientación correctas; "
-          f"{false_pos} lecturas de cartas que no estaban")
-
-
-def evaluate_empty(deck, n=40, seed=3):
-    rng = np.random.default_rng(seed)
-    fp = 0
-    for _ in range(n):
-        frame = np.clip(_table(rng) + rng.normal(0, 8, (H, W, 3)), 0, 255).astype(np.uint8)
-        # objetos que no son cartas: rectángulos de colores y una mano/ruido
-        if rng.random() < .5:
-            x, y = int(rng.integers(50, 300)), int(rng.integers(50, 200))
-            cv2.rectangle(frame, (x, y), (x + int(rng.integers(80, 250)), y + int(rng.integers(80, 250))),
-                          tuple(int(v) for v in rng.integers(0, 255, 3)), -1)
-        for d in find_cards(frame):
-            fp += deck.identify(d) is not None
-    print(f"Mesa sin cartas: {fp} falsos positivos en {n} fotogramas")
-
-
-if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--trials", type=int, default=2)
-    ap.add_argument("-v", action="store_true")
-    a = ap.parse_args()
-    deck = Deck(DECK_DIR)
-    evaluate(deck, a.trials, verbose=a.v)
-    evaluate_multi(deck)
-    evaluate_empty(deck)

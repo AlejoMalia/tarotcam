@@ -17,6 +17,7 @@ import numpy as np
 from tarotcam.astro import chartlink
 from tarotcam.carddata import correspondences
 from tarotcam.engine import synthesis
+from tarotcam.carddata import cards, decks
 from tarotcam.carddata.cards import BY_ID, keywords, meaning
 from tarotcam.i18n import L, card_name, join_and, plural, term
 from tarotcam.engine.semantics import theme_text
@@ -173,6 +174,13 @@ def position_names(n: int):
     return [L(*p) for p in names] if names else None
 
 
+def _deck_names(text: str, ids) -> str:
+    """Los textos de parejas usan los nombres Rider-Waite-Smith: cambiarlos por los de la baraja activa."""
+    for i in ids:
+        text = text.replace(card_name(cards.CARDS[i]), card_name(BY_ID[i]))
+    return text
+
+
 def dignity(a: str, b: str) -> float:
     return DIGNITY.get((a, b), 0.0)
 
@@ -196,6 +204,8 @@ def _quintessence(cs: list[CS]):
     total = sum(c.card["num"] for c in cs)
     while total > 21:
         total = sum(int(d) for d in str(total))
+    if cards.system() == "marseille":                 # en Marsella la Justicia es la VIII y la Fuerza la XI
+        return total, BY_ID[decks.marseille_number(total)]
     return total, BY_ID[total]                      # id 0..21 = arcanos mayores
 
 
@@ -316,7 +326,7 @@ def sections(layout, cs: list[CS], chart=None):
     out.append((L("Theme", "Tema"), th))
 
     # 5. Combinaciones, números y cortes
-    extra = [L(*txt) for (a, b), txt in PAIRS.items()
+    extra = [_deck_names(L(*txt), (a, b)) for (a, b), txt in PAIRS.items()
              if any(c.card["id"] == a for c in cs) and any(c.card["id"] == b for c in cs)]
     for c in cs:
         if c.card.get("court"):
